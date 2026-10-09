@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import zipfile
 from collections import defaultdict
+from contextlib import suppress
 from datetime import timezone
 
 import pkginfo
@@ -16,7 +17,7 @@ from django.db.models import F, FilteredRelation, Q
 from django.db.utils import IntegrityError
 from jinja2 import Template
 from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
+from packaging.utils import InvalidName, canonicalize_name
 from packaging.version import InvalidVersion, parse
 from pypi_simple import ACCEPT_JSON_PREFERRED, ProjectPage
 
@@ -575,18 +576,27 @@ def python_content_to_download_info(content, base_path, domain=None):
     }
 
 
+def _canonicalize_name_iterator(names):
+    for name in names:
+        with suppress(InvalidName):
+            yield (name, canonicalize_name(name, validate=True))
+
+
 def write_simple_index(project_names):
     """Writes the simple index."""
     simple = Template(simple_index_template, autoescape=True)
     context = {
         "SIMPLE_API_VERSION": SIMPLE_API_VERSION,
-        "projects": ((x, canonicalize_name(x)) for x in project_names),
+        "projects": _canonicalize_name_iterator(project_names),
     }
     return simple.render(**context)
 
 
 def write_simple_detail(project_name, project_packages):
     """Writes the simple detail page of a package."""
+    # TODO: Think about adding this regex to the database:
+    # https://packaging.python.org/en/latest/specifications/name-normalization/#name-format
+    canonicalize_name(project_name, validate=True)
     detail = Template(simple_detail_template, autoescape=True)
     context = {
         "SIMPLE_API_VERSION": SIMPLE_API_VERSION,
@@ -610,7 +620,7 @@ def write_simple_detail_json(project_name, project_packages):
     """Writes the simple detail page in JSON format."""
     return {
         "meta": {"api-version": SIMPLE_API_VERSION, "_last-serial": PYPI_SERIAL_CONSTANT},
-        "name": canonicalize_name(project_name),
+        "name": canonicalize_name(project_name, validate=True),
         "files": [
             {
                 # v1.0, PEP 691
